@@ -85,7 +85,7 @@ class GaussianNPNLayer(nn.Module):
 
     def forward(self, input):
         input_c, input_d = input
-        GaussianNPNFunction.apply(input_c, input_d,
+        return GaussianNPNFunction.apply(input_c, input_d,
             self.weight_c, self.weight_d,
             self.bias_c, self.bias_d)
 
@@ -124,11 +124,14 @@ class GaussianNPN(nn.Module):
         out = input
         for L in self.layers:
             out = L(out)
-            print(out)
+            print('out', out)
         return out
         
 
 if __name__ == '__main__':
+    # do a small test
     g = GaussianNPN(10, 5, [2, 2])
     m = autograd.Variable(torch.FloatTensor(np.random.rand(10, 1)))
     s = autograd.Variable(torch.FloatTensor(np.random.rand(10, 1)))
+    g((m, s))
+
