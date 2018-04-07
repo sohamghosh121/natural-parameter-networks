@@ -2,10 +2,11 @@
     Defines implementation for NPNs
 """
 
-import torch 
+import torch
+import numpy as np
 import torch.nn as nn
 import torch.autograd as autograd
-import torch.Fun
+import torch.nn.functional as F
 
 
 def gaussian_f(c, d):
@@ -25,7 +26,7 @@ def gaussian_f_inv(m, s):
         Calculates natural parameters given mean, variance
         >> c, d = f_inv(c, d)
 
-        f_inv(m, s) ==> N(-c/2d, -1/2d)
+        f_inv(m, s) ==> N(m/s, -1/2s)
     """
     c = m/s
     d = -1.0/(2.0 * s)
@@ -33,14 +34,14 @@ def gaussian_f_inv(m, s):
 
 class GaussianNPNFunction(autograd.Function):
     @staticmethod
-    def forward(ctx, input_statistics, weight_statistics, bias_statistics):
+    def forward(ctx, input_c, input_d, weight_c, weight_d, bias_c, bias_d):
         # compute linear pass
-        ctx.save_for_backward(input_statistics, weight_statistics, bias_statistics)
-        # compute non-linear activation
+        ETA = float(np.pi / 8.0)
+        ALPHA = float(4.0 - 2.0 * np.sqrt(2))
+        BETA = - float(np.log(np.sqrt(2) + 1))
 
-        (input_c, input_d) = input_statistics
-        (weight_c, weight_d) = weight_statistics
-        (bias_c, bias_d) = bias_statistics
+        ctx.save_for_backward(input_c, input_d, weight_c, weight_d, bias_c, bias_d)
+        # compute non-linear activation
 
         input_m, input_s = gaussian_f(input_c, input_d)
         weight_m, weight_s = gaussian_f(weight_c, weight_d)
@@ -50,34 +51,29 @@ class GaussianNPNFunction(autograd.Function):
         output_s = torch.mm(weight_s.t(), input_s) + bias_s
 
         output_c, output_d = gaussian_f_inv(output_m, output_s)
-        return (output_c, output_d)
+
+        # non-linearity
+        # TODO: implement other activation functions
+        activation_m = torch.sigmoid(output_c / torch.sqrt(1 + ETA * output_d))
+        activation_s = torch.sigmoid((ALPHA * (output_c + BETA))/torch.sqrt(1 + ETA * ALPHA ** 2.0 * output_d)) - (activation_m ** 2)
+        
+        return (activation_m, activation_s)
 
     @staticmethod
     def backward(ctx, grad_output):
-        (input_c, input_d), (weight_c, weight_d), (bias_c, bias_d) = ctx.saved_variables
+        input_c, input_d, weight_c, weight_d, bias_c, bias_d = ctx.saved_variables
+
+        # calculate gradients here
         grad_weight_c = grad_weight_d = grad_bias_c = grad_bias_d = None
         grad_input = grad_output = None
 
-        # These needs_input_grad checks are optional and there only to
-        # improve efficiency. If you want to make your code simpler, you can
-        # skip them. Returning gradients for inputs that don't require it is
-        # not an error.
+        return grad_input, grad_weight_c, grad_weight_d, grad_bias_c, grad_bias_d
 
-        # if ctx.needs_input_grad[0]:
-        #     grad_input = grad_output.mm(weight_c)
-        # if ctx.needs_input_grad[1]:
-        #     grad_weight = grad_output.t().mm(input)
-        # if bias is not None and ctx.needs_input_grad[2]:
-        #     grad_bias = grad_output.sum(0).squeeze(0)
-
-        return grad_input, (grad_weight_c, grad_weight_d), (grad_bias_c, grad_bias_d)
-
-
-
-class GaussianNPN(nn.Module):
+class GaussianNPNLayer(nn.Module):
     def __init__(self, input_features, output_features):
-        self.weight_c = nn.Parameter(torch.Tensor(output_features, input_features))
-        self.weight_d = nn.Parameter(torch.Tensor(output_features, input_features))
+        super(GaussianNPNLayer, self).__init__()
+        self.weight_c = nn.Parameter(torch.Tensor(input_features, output_features))
+        self.weight_d = nn.Parameter(torch.Tensor(input_features, output_features))
         self.bias_c = nn.Parameter(torch.Tensor(output_features))
         self.bias_d = nn.Parameter(torch.Tensor(output_features))
 
@@ -87,9 +83,52 @@ class GaussianNPN(nn.Module):
         self.bias_c.data.uniform_(-0.1, 0.1)
         self.bias_d.data.uniform_(-0.1, 0.1)
 
-        
+    def forward(self, input):
+        input_c, input_d = input
+        GaussianNPNFunction.apply(input_c, input_d,
+            self.weight_c, self.weight_d,
+            self.bias_c, self.bias_d)
+
+
+class CrossEntropyLossGaussianNPN(autograd.Function):
+    def forward(self, input, target):
+        # TODO: now using default parameters - what do they mean?
+        input_c, input_d = input
+        input_m, input_s = gaussian_f(input_c, input_d)
+        return F.cross_entropy(input_m, target, self.weight, True,
+                               -100, True)
+
+    def kappa(self, x):
+        ETA = np.pi / 8.0
+        return torch.sqrt(1 + ETA * x)
+
+    def backward(self, grad_output):
+        pass
+
+
+class GaussianNPN(nn.Module):
+    def __init__(self, input_features, output_classes, hidden_sizes):
+        super(GaussianNPN, self).__init__()
+        assert(len(hidden_sizes) >= 0)
+        self.layers = []
+        for i, h_sz in enumerate(hidden_sizes):
+            if i == 0 :
+                h = GaussianNPNLayer(input_features, hidden_sizes[i])
+            else:
+                h = GaussianNPNLayer(hidden_sizes[i-1], hidden_sizes[i])
+            self.layers.append(h)
+        if len(hidden_sizes) > 0:
+            self.layers.append(GaussianNPNLayer(hidden_sizes[-1], hidden_sizes[i]))            
 
     def forward(self, input):
-        GaussianNPNFunction.apply(input,
-            (self.weight_c, self.weight_d),
-            (self.bias_c, self.bias_d))
+        out = input
+        for L in self.layers:
+            out = L(out)
+            print(out)
+        return out
+        
+
+if __name__ == '__main__':
+    g = GaussianNPN(10, 5, [2, 2])
+    m = autograd.Variable(torch.FloatTensor(np.random.rand(10, 1)))
+    s = autograd.Variable(torch.FloatTensor(np.random.rand(10, 1)))
