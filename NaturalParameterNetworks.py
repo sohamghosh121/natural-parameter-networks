@@ -5,10 +5,11 @@
 import torch
 import numpy as np
 import torch.nn as nn
+import torch.optim as O
 import torch.autograd as autograd
 import torch.nn.functional as F
 
-
+PI = np.pi
 ETA = float(np.pi / 8.0)
 ALPHA = float(4.0 - 2.0 * np.sqrt(2))
 BETA = - float(np.log(np.sqrt(2) + 1))
@@ -73,15 +74,18 @@ class GaussianNPNSigmoidFunction(autograd.Function):
     @staticmethod
     def forward(ctx, output_c, output_d):
         # compute non-linear activation
+        ctx.save_for_backward(output_c, output_d)
         activation_m = torch.sigmoid(output_c / torch.sqrt(1 + ETA * output_d))
         activation_s = torch.sigmoid((ALPHA * (output_c + BETA))/torch.sqrt(1 + ETA * ALPHA ** 2.0 * output_d)) - (activation_m ** 2)
         return (activation_m, activation_s)
-
+    
+    @staticmethod
     def backward(ctx, grad_output):
+        print('came here')
         output_c, output_d = ctx.saved_variables
         # calculate gradients here
         grad_input = grad_output = None
-        return grad_input
+        return output_c, output_d
 
 
 def kappa(x):
@@ -95,7 +99,7 @@ class GaussianNPNCrossEntropy(autograd.Function):
     """
     @staticmethod
     def forward(ctx, o_c, o_d, y, eps):
-        # ctx.save_for_backward()
+        ctx.save_for_backward(o_c, o_d, y)
         k = torch.Tensor([y.size()[0]])
         det_ratio = torch.Tensor([torch.prod(o_d / eps)])
         KL = 0.5 * (torch.sum(o_d/eps) + torch.sum(torch.pow(o_c - y, 2) / eps) - k + torch.log(det_ratio))
@@ -108,7 +112,7 @@ class GaussianNPNCrossEntropy(autograd.Function):
         grad__o_m = grad__o_s = None
         grad__o_m = (torch.sigmoid(kappa(o_s) * o_m) - y) * kappa(o_s)
         grad__o_s = (torch.sigmoid(kappa(o_s) * o_m) - y) * o_m * (- PI / 16.0 * torch.pow(1 + PI * o_s / 8.0 , -1.5))
-        return grad__o_m, grad__o_s
+        return grad__o_m, grad__o_s, None, None
         
 
 class GaussianNPNLayer(nn.Module):
@@ -120,11 +124,10 @@ class GaussianNPNLayer(nn.Module):
         self.bias_d = nn.Parameter(torch.Tensor(output_features, 1))
 
         # TODO: check how to do initialisation
-        self.weight_c.data.uniform_(-0.1, 0.1)
-        self.weight_d.data.uniform_(-0.1, 0.1)
-        self.bias_c.data.uniform_(-0.1, 0.1)
-        self.bias_d.data.uniform_(-0.1, 0.1)
-
+        self.weight_c.data.uniform_(-1.0, 1.0)
+        self.weight_d.data.uniform_(-1., 0.0)
+        self.bias_c.data.uniform_(-1.0, 1.)
+        self.bias_d.data.uniform_(-1., 0.0)
         self.activation = activation
 
     def forward(self, input):
@@ -153,13 +156,10 @@ class GaussianNPN(nn.Module):
         if len(hidden_sizes) > 0:
             self.layers.append(GaussianNPNLayer(hidden_sizes[-1], output_classes))
         self.epsilon = torch.ones(output_classes) * eps
+        self.net = nn.Sequential(*list(self.layers)) # just to make model.parameters() work
 
-
-    def forward(self, input):
-        out = input
-        for L in self.layers:
-            out = L(out)
-        return out
+    def forward(self, x_m, x_s):
+        return self.net((x_m, x_s))
 
     def loss(self, input, output):
         out = input
@@ -172,10 +172,15 @@ class GaussianNPN(nn.Module):
 
 if __name__ == '__main__':
     # do a small test
-    g = GaussianNPN(10, 2, [5,5])
-    m = autograd.Variable(torch.FloatTensor(np.random.rand(10, 1)))
-    s = autograd.Variable(torch.FloatTensor(np.random.rand(10, 1)))
-    y = torch.Tensor([[1,0]]).t()
-    loss = g.loss((m, s), y)
-    print(loss)
 
+    g = GaussianNPN(10, 2, [5,5])
+    optimizer = torch.optim.Adam(g.parameters())
+    m = autograd.Variable(torch.FloatTensor(np.random.rand(10, 1)), requires_grad=False)
+    s = autograd.Variable(torch.FloatTensor(np.random.rand(10, 1)), requires_grad=False)
+    y = autograd.Variable(torch.Tensor([[1,0]]), requires_grad=False).t()
+    loss = g.loss((m, s), y)
+    pred = g(m, s)
+    print('pred', pred)
+    print('loss', loss)
+    loss.backward()
+    # optimizer.step()
