@@ -51,7 +51,7 @@ class GaussianNPNCrossEntropy(autograd.Function):
         ctx.save_for_backward(o_c, o_d, y)
         k = torch.Tensor([y.size()[0]])
         det_ratio = torch.Tensor([torch.prod(o_d / eps)])
-        print('o_d', torch.prod(o_d))
+        print('o_d', torch.prod(o_d / eps))
         KL = 0.5 * (torch.sum(o_d/eps) + torch.sum(torch.pow(o_c - y, 2) / eps) - k + torch.log(det_ratio))
         return KL
 
@@ -101,7 +101,7 @@ class GaussianNPNLayer(nn.Module):
 
 
 class GaussianNPN(nn.Module):
-    def __init__(self, input_features, output_classes, hidden_sizes, activation='sigmoid', eps=0.1):
+    def __init__(self, input_features, output_classes, hidden_sizes, activation='sigmoid', eps=0.5):
         super(GaussianNPN, self).__init__()
         assert(len(hidden_sizes) >= 0)
         self.num_classes = output_classes
