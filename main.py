@@ -12,13 +12,16 @@ from torch.autograd import Variable
 from torchvision import datasets
 from NaturalParameterNetworks import GaussianNPN
 
-def train(model, optimizer, epoch, batch_size=32, log_interval=10):
+
+torch.manual_seed(42) # my favorite seed
+
+def train(model, optimizer, epoch, batch_size=32, log_interval=100):
     model.train()
     for batch_idx, (data, target) in enumerate(train_loader):
-        data = data.view(batch_size, 784)
+        data = data.view(data.size(0), -1)
         data_m = Variable(data)
         data_s = Variable(torch.zeros(data_m.size()))
-        target_onehot = torch.FloatTensor(batch_size, 10)
+        target_onehot = torch.FloatTensor(data.size(0), 10)
         target_onehot.zero_()
         target_onehot.scatter_(1, target.unsqueeze(1), 1)
         target_onehot = Variable(target_onehot)
@@ -39,16 +42,18 @@ def test(model, batch_size=32):
     test_loss = 0
     correct = 0
     for data, target in test_loader:
-        data = data.view(batch_size, 784).t()
+        data = data.view(data.size(0), -1)
         data_m = Variable(data)
         data_s = Variable(torch.zeros(data_m.size()))
-        target_onehot = torch.FloatTensor(32, 10)
+        target_onehot = torch.FloatTensor(data.size(0), 10)
         target_onehot.zero_()
         target_onehot.scatter_(1, target.unsqueeze(1), 1)
         target_onehot = Variable(target_onehot)
         output = model(data_m, data_s)
-        pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
+        loss = model.loss((data_m, data_s), target_onehot)
+        pred = output[0].data.max(1, keepdim=True)[1] # get the index of the max log-probability
         correct += pred.eq(target.view_as(pred)).long().cpu().sum()
+        test_loss += loss.data.numpy()[0]
 
     test_loss /= len(test_loader.dataset)
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
