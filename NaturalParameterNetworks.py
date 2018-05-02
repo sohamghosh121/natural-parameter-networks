@@ -49,11 +49,20 @@ class GaussianNPNCrossEntropy(autograd.Function):
     @staticmethod
     def forward(ctx, o_c, o_d, y, eps):
         ctx.save_for_backward(o_c, o_d, y)
-        k = torch.Tensor([y.size()[0]])
-        det_ratio = torch.Tensor([torch.prod(o_d / eps)])
-        print('o_d', torch.prod(o_d / eps))
-        KL = 0.5 * (torch.sum(o_d/eps) + torch.sum(torch.pow(o_c - y, 2) / eps) - k + torch.log(det_ratio))
-        return KL
+        k = torch.Tensor([y.size(1)])
+        # print('999')
+        # print(o_d[o_d > 0])
+        # print(o_d)
+        # print(o_d / eps)
+        # exit()
+        o_m, o_s = gaussian_f(o_c, o_d)
+        det_ratio = torch.prod(o_s / eps, 1)
+        # print(det_ratio)
+        # print('asdasdasdasd')
+        # print(o_s < 0)
+        KL = 0.5 * (torch.sum(o_s/eps, 1) + torch.sum(torch.pow(o_m - y, 2) / eps, 1) - k + torch.log(det_ratio))
+        return torch.Tensor([torch.mean(KL)])
+        
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -68,10 +77,8 @@ class GaussianNPNCrossEntropy(autograd.Function):
 class GaussianNPNLayer(nn.Module):
     def __init__(self, input_features, output_features, activation=None):
         super(GaussianNPNLayer, self).__init__()
-        self.weight_c = nn.Parameter(torch.Tensor(input_features, output_features))
-        self.weight_d = nn.Parameter(torch.Tensor(input_features, output_features))
-        self.bias_c = nn.Parameter(torch.Tensor(output_features))
-        self.bias_d = nn.Parameter(torch.Tensor(output_features))
+        self.weight_c, self.weight_d = self.get_init_W(input_features, output_features)
+        self.bias_c, self.bias_d = self.get_init_b(output_features)
 
         # TODO: check how to do initialisation
         self.weight_c.data.uniform_(-1.0, 1.0)
@@ -79,6 +86,19 @@ class GaussianNPNLayer(nn.Module):
         self.bias_c.data.uniform_(-1.0, 1.)
         self.bias_d.data.uniform_(-1., 0.0)
         self.activation = activation
+
+    def get_init_W(self, _in, _out):
+        # obtained from the original paper
+        W_m = 2 * np.sqrt(6)/ np.sqrt(_in + _out) * (np.random.rand(_in, _out) - 0.5)
+        W_s = 1 * np.sqrt(6)/ np.sqrt(_in + _out) * (np.random.rand(_in, _out))
+        W_c, W_d = gaussian_f_inv(W_m , W_s)
+        return nn.Parameter(torch.Tensor(W_c)), nn.Parameter(torch.Tensor(W_d))
+
+    def get_init_b(self, _out):
+        b_m = np.zeros((_out))
+        b_s = np.log(np.exp(-1 * np.ones((_out)) ) + 1)
+        b_c, b_d = gaussian_f_inv(b_m , b_s)
+        return nn.Parameter(torch.Tensor(b_c)), nn.Parameter(torch.Tensor(b_d))
 
     def forward(self, input):
         input_m, input_s = input
@@ -90,6 +110,11 @@ class GaussianNPNLayer(nn.Module):
         o_s = torch.matmul(input_s, weight_s) + \
             torch.matmul(input_s, torch.pow(weight_m, 2)) + \
             torch.matmul(torch.pow(input_s, 2), weight_s)
+        # print('\n\n\n\n')
+        # print('input_m', input_m)
+        # print('input_s', input_s)
+        # print('o_m', o_m)
+        # print('o_s', o_s)
         o_s += bias_s.unsqueeze(0).expand_as(o_s)
         o_c, o_d = gaussian_f_inv(o_m, o_s)
         if self.activation == 'sigmoid':
@@ -113,12 +138,18 @@ class GaussianNPN(nn.Module):
                 h = GaussianNPNLayer(hidden_sizes[i-1], hidden_sizes[i], activation)
             self.layers.append(h)
         if len(hidden_sizes) > 0:
-            self.layers.append(GaussianNPNLayer(hidden_sizes[-1], output_classes))
+            self.layers.append(GaussianNPNLayer(hidden_sizes[-1], output_classes, activation))
+        else:
+            self.layers.append(GaussianNPNLayer(input_features, output_classes, activation))
         self.epsilon = torch.ones(output_classes) * eps
         self.net = nn.Sequential(*list(self.layers)) # just to make model.parameters() work
 
     def forward(self, x_m, x_s):
-        return self.net((x_m, x_s))
+        out = x_m, x_s
+        for ix, L in enumerate(self.layers):
+            out = L(out)
+        o_c, o_d = out
+        return o_c
 
     def loss(self, input, y):
         """
@@ -127,7 +158,6 @@ class GaussianNPN(nn.Module):
         out = input
         for ix, L in enumerate(self.layers):
             out = L(out)
-        
         o_c, o_d = out
         loss = GaussianNPNCrossEntropy.apply(o_c, o_d, y, self.epsilon)
         return loss

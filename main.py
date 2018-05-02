@@ -27,25 +27,26 @@ def train(model, optimizer, epoch, batch_size=32, log_interval=10):
         loss = model.loss((data_m, data_s), target_onehot)
         loss.backward()
         optimizer.step()
+        # exit()
         if batch_idx % log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                 100. * batch_idx / len(train_loader), loss.data[0]))
     
 
-def test(model, ):
+def test(model, batch_size=32):
     model.eval()
     test_loss = 0
     correct = 0
     for data, target in test_loader:
-        data = data.view(1, 784).t()
+        data = data.view(batch_size, 784).t()
         data_m = Variable(data)
         data_s = Variable(torch.zeros(data_m.size()))
-        target_onehot = torch.FloatTensor(32, nb_digits)
+        target_onehot = torch.FloatTensor(32, 10)
         target_onehot.zero_()
-        target_onehot.scatter_(1, target, 1)
+        target_onehot.scatter_(1, target.unsqueeze(1), 1)
         target_onehot = Variable(target_onehot)
-        output = model(data)
+        output = model(data_m, data_s)
         pred = output.data.max(1, keepdim=True)[1] # get the index of the max log-probability
         correct += pred.eq(target.view_as(pred)).long().cpu().sum()
 
