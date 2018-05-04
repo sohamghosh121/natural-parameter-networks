@@ -13,6 +13,8 @@ from torch.autograd import Variable
 from torchvision import datasets
 from NaturalParameterNetworks import GaussianNPN
 
+from torchviz import make_dot, make_dot_from_trace
+
 SEED = 42  # my favorite seed
 
 torch.manual_seed(SEED)
@@ -23,17 +25,21 @@ def train(model, optimizer, epoch, batch_size=128, log_interval=10):
     train_loss = 0
     train_correct = 0
     for batch_idx, (data, target) in enumerate(train_loader):
+        optimizer.zero_grad()
         data = data.view(data.size(0), -1)
         data_m = Variable(data)
         data_s = Variable(torch.zeros(data_m.size()))
+        trace, _ = torch.jit.trace(model, args=( data_m,data_s ))
         target_onehot = torch.FloatTensor(data.size(0), 10)
         target_onehot.zero_()
         target_onehot.scatter_(1, target.unsqueeze(1), 1)
         target_onehot = Variable(target_onehot)
+        # print(id(data_m))
 
-        optimizer.zero_grad()
-        loss = model.loss((data_m, data_s), target_onehot)
+        loss = model.loss(data_m, data_s, target_onehot)
+
         loss.backward()
+
         optimizer.step()
         train_loss += loss.data.numpy()[0]
         
@@ -47,7 +53,7 @@ def train(model, optimizer, epoch, batch_size=128, log_interval=10):
                 100. * batch_idx / len(train_loader), loss.data[0]))
     
     print('\nTrain set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
-        train_loss / len(train_loader.dataset), train_correct, len(train_loader.dataset),
+        train_loss , train_correct, len(train_loader.dataset),
         100. * train_correct / len(train_loader.dataset)))
     
 
@@ -65,19 +71,18 @@ def test(model, batch_size=128):
         target_onehot = Variable(target_onehot)
         output = model(data_m, data_s)
         
-        loss = model.loss((data_m, data_s), target_onehot)
+        loss = model.loss(data_m, data_s, target_onehot)
         pred = output[0].data.max(1, keepdim=True)[1] # get the index of the max log-probability
         correct += pred.eq(target.view_as(pred)).long().cpu().sum()
         test_loss += loss.data.numpy()[0]
 
-    test_loss /= len(test_loader.dataset)
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
     
 
 if __name__ == '__main__':
-    BATCH_SZ = 32
+    BATCH_SZ = 128
 
     train_loader = torch.utils.data.DataLoader(
         datasets.MNIST('./data', train=True, download=True,
@@ -91,7 +96,7 @@ if __name__ == '__main__':
                     ])),
         batch_size=BATCH_SZ, shuffle=True)
 
-    model = GaussianNPN(784, 10, [])
+    model = GaussianNPN(784, 10, [400,400])
     optimizer = optim.Adadelta(model.parameters())
 
     for epoch in range(1, 100 + 1):
