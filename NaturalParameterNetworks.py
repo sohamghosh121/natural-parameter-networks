@@ -11,9 +11,14 @@ import torch.nn.functional as F
 
 PI = float(np.pi)
 ETA_SQ = float(np.pi / 8.0)
+# for sigmoid
 ALPHA = float(4.0 - 2.0 * np.sqrt(2))
 ALPHA_SQ = float(ALPHA ** 2.0)
 BETA = - float(np.log(np.sqrt(2) + 1))
+# for tanh
+ALPHA_2 = float(8.0 - 4.0 * np.sqrt(2))
+ALPHA_2_SQ = float(ALPHA ** 2.0)
+BETA_2 = - float(0.5 * np.log(np.sqrt(2) + 1))
 
 def gaussian_f(c, d):
     """
@@ -38,8 +43,8 @@ def gaussian_f_inv(m, s):
     d = -1.0/(2.0 * s)
     return (c, d)
 
-def kappa(x):
-    return 1 / torch.sqrt(1 + x * ETA_SQ)
+def kappa(x, const=1.0, alphasq= 1.0):
+    return 1 / torch.sqrt(const + x * alphasq * ETA_SQ)
 
 class GaussianNPNKLDivergence(autograd.Function):
     """
@@ -60,7 +65,7 @@ class GaussianNPNKLDivergence(autograd.Function):
     @staticmethod
     def backward(ctx, grad_output):
         raise NotImplementedError()
-        
+
 
 class GaussianNPNLinearLayer(nn.Module):
     def __init__(self, input_features, output_features):
@@ -94,6 +99,7 @@ class GaussianNPNLinearLayer(nn.Module):
 
 
 class GaussianNPNNonLinearity(nn.Module):
+    # TODO: does it help to define this in a function instead?
     def __init__(self, activation):
         super(GaussianNPNNonLinearity, self).__init__()
         self.activation = activation
@@ -101,14 +107,18 @@ class GaussianNPNNonLinearity(nn.Module):
     def forward(self, o_m, o_s):
         if self.activation == 'sigmoid':
             a_m = torch.sigmoid(o_m * kappa(o_s))
-            a_s = torch.sigmoid(((o_m + BETA) * ALPHA)/torch.sqrt(1 + o_s * ETA_SQ * ALPHA_SQ)) - torch.pow(a_m, 2)
+            a_s = torch.sigmoid(((o_m + BETA) * ALPHA) * kappa(o_s, alphasq=ALPHA_SQ)) - torch.pow(a_m, 2)
+            return a_m, a_s
+        elif self.activation == 'tanh':
+            a_m = 2.0 * torch.sigmoid(o_m * kappa(o_s, const=0.25)) - 1
+            a_s = 4.0 * torch.sigmoid(((o_m + BETA_2) * ALPHA_2) * kappa(o_s, alphasq=ALPHA_2_SQ)) - torch.pow(a_m, 2) - 2.0 * a_m - 1.0
             return a_m, a_s
         else:
             return o_m, o_s
 
 
 class GaussianNPN(nn.Module):
-    def __init__(self, input_features, output_classes, hidden_sizes, activation='sigmoid', eps=0.5):
+    def __init__(self, input_features, output_classes, hidden_sizes, activation='sigmoid'):
         super(GaussianNPN, self).__init__()
         assert(len(hidden_sizes) >= 0)
         self.num_classes = output_classes
@@ -126,9 +136,9 @@ class GaussianNPN(nn.Module):
         else:
             self.layers.append(GaussianNPNLinearLayer(input_features, output_classes))
 
-        self.layers.append(GaussianNPNNonLinearity(activation))
+        self.layers.append(GaussianNPNNonLinearity('sigmoid')) # last one needs to be sigmoid
         self.net = nn.Sequential(*list(self.layers)) # just to make model.parameters() work
-        self.lossfn = nn.BCELoss()
+        self.lossfn = nn.BCELoss(size_average=False)
 
     def forward(self, a_m, a_s):
         for L in self.layers:
