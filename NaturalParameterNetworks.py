@@ -20,29 +20,6 @@ ALPHA_2 = float(8.0 - 4.0 * np.sqrt(2))
 ALPHA_2_SQ = float(ALPHA ** 2.0)
 BETA_2 = - float(0.5 * np.log(np.sqrt(2) + 1))
 
-def gaussian_f(c, d):
-    """
-        Calculates mean and variance given natural parameters
-        >> m, s = f(c, d)
-
-        f(c, d) ==> N(-c/2d, -1/2d)
-    """
-    m = -c/(2.0 * d)
-    s = -1.0/(2.0 * d)
-    return (m, s)
-
-
-def gaussian_f_inv(m, s):
-    """
-        Calculates natural parameters given mean, variance
-        >> c, d = f_inv(m, s)
-
-        f_inv(m, s) ==> exp(m/s, -1/2s)
-    """
-    c = m/s
-    d = -1.0/(2.0 * s)
-    return (c, d)
-
 def kappa(x, const=1.0, alphasq= 1.0):
     return 1 / torch.sqrt(const + x * alphasq * ETA_SQ)
 
@@ -123,7 +100,6 @@ class GaussianNPN(nn.Module):
         assert(len(hidden_sizes) >= 0)
         self.num_classes = output_classes
         self.layers = []
-        self.params = []
         for i, h_sz in enumerate(hidden_sizes):
             if i == 0 :
                 h = GaussianNPNLinearLayer(input_features, hidden_sizes[i])
@@ -146,9 +122,5 @@ class GaussianNPN(nn.Module):
         return a_m, a_s
 
     def loss(self, x_m, x_s, y):
-        """
-            output - torch.LongTensor
-        """
-        # print(id(x_m))
         a_m, a_s = self.forward(x_m, x_s)
         return self.lossfn(a_m, y)

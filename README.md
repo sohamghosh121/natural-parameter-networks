@@ -6,10 +6,15 @@ This repository implements the Gaussian variant of NPN for classification and ex
 
 *To run MNIST example*
 ```
-python main.py
+python main-mnist.py
 ```
 
-This has been done for course research project for 10-708 Probablistic Graphical Models at Carnegie Mellon.
+*To run LM example*
+```
+python main-lm.py
+```
+
+This has been done for course research project for 10-708 Probablistic Graphical Models at Carnegie Mellon University.
 
 ## TODO
 * Implementation of NPRN

@@ -34,7 +34,6 @@ def train(model, optimizer, epoch, batch_size=128, log_interval=10):
         target_onehot.zero_()
         target_onehot.scatter_(1, target.unsqueeze(1), 1)
         target_onehot = Variable(target_onehot)
-        # print(id(data_m))
 
         loss = model.loss(data_m, data_s, target_onehot)
 
