@@ -6,7 +6,7 @@ import torch.optim as O
 import torch.autograd as autograd
 import torch.nn.functional as F
 
-from NaturalParameterNetworks import GaussianNPNNonLinearity
+from NaturalParameterNetworks import GaussianNPNLinearLayer, GaussianNPNNonLinearity
 
 PI = float(np.pi)
 ETA_SQ = float(np.pi / 8.0)
@@ -55,12 +55,12 @@ class GaussianNPRN(nn.Module):
         W_m, W_s = W
         U_m, U_s = U
         b_m, b_s = b
-        o_m = b_m + torch.mm(x_m, W_m) + torch.mm(h_m, U_m)
-        o_s = b_s + torch.mm(x_s, W_s) + \
-            torch.mm(x_s, torch.pow(W_m, 2)) + \
-            torch.mm(torch.pow(x_m, 2), W_s) + \
-            torch.mm(h_s, torch.pow(U_s, 2)) + \
-            torch.mm(torch.pow(h_m, 2), U_s)
+        o_m = b_m + torch.matmul(x_m, W_m) + torch.matmul(h_m, U_m)
+        o_s = b_s + torch.matmul(x_s, W_s) + \
+            torch.matmul(x_s, torch.pow(W_m, 2)) + \
+            torch.matmul(torch.pow(x_m, 2), W_s) + \
+            torch.matmul(h_s, torch.pow(U_s, 2)) + \
+            torch.matmul(torch.pow(h_m, 2), U_s)
         return o_m, o_s
 
     def get_init_W(self, _in, _out):
@@ -79,9 +79,13 @@ class GaussianNPRN(nn.Module):
     def pos_variance_transform(self, s):
         return torch.log(1 + torch.exp(s))
 
-    def forward(self, input_m, h_m, h_s):
+    def forward(self, input, h_m, h_s):
         # always assume input_s is zero
-        input_s = autograd.Variable(torch.zeros(input_m.size()))
+        if type(input) is tuple: # directly sending input_m, input_s
+            input_m, input_s = input
+        elif type(input) is autograd.Variable:
+            input_m = input
+            input_s = autograd.Variable(torch.zeros(input_m.size()))
 
         # do this to ensure positivity
         Wz_in_s = self.pos_variance_transform(self.Mz_in_s)
@@ -145,30 +149,62 @@ class GaussianNPRNCell(nn.Module):
     """
         Wrapper around GaussianNPRN that goes through a sequence
     """
-    def __init__(self, input_features, hidden_sz, eps=0.1, variant='gru'):
+    def __init__(self, input_features, hidden_sz, eps=0.0, variant='gru'):
         super(GaussianNPRNCell, self).__init__()
         self.rnn = GaussianNPRN(input_features, hidden_sz, variant='gru')
         self.eps = eps # small value for h_s
-        
-        # self.params = self.rnn.parameters() # do I need to do this?
+
+    def init_hidden(self, batch_sz):
+        h_m = autograd.Variable(torch.zeros(batch_sz, self.rnn.input_features))
+        # non-zero variance?
+        h_s = autograd.Variable(torch.zeros(batch_sz, self.rnn.input_features).fill_(self.eps))
+        return h_m, h_s
 
     def forward(self, input_seq, hidden=None):
-        # input: S x 1 X N
+        # input: S x B x 1 x N
+        # TODO: implement more checks to make nicer code :)
+        if len(input_seq.size()) < 3:
+            raise ValueError('input should be of shape S x B x N')
         if hidden is None:
-            h_m = autograd.Variable(torch.FloatTensor(1, self.rnn.hidden_sz).zero_())
-            h_s = autograd.Variable(torch.FloatTensor(1, self.rnn.hidden_sz).fill_(self.eps))
-            
+            h_m = autograd.Variable(torch.FloatTensor(input_seq.size(1), self.rnn.hidden_sz).zero_())
+            h_s = autograd.Variable(torch.FloatTensor(input_seq.size(1), self.rnn.hidden_sz).fill_(self.eps))
+        else:
+            h_m, h_s = hidden # tuple
         hiddens_m = []
         hiddens_s = []
         for w in input_seq:
             h_m, h_s = self.rnn(w, h_m, h_s)
-            hiddens_m.append(h_m)
-            hiddens_s.append(h_s)
+            hiddens_m.append(h_m.unsqueeze(0))
+            hiddens_s.append(h_s.unsqueeze(0))
         return (torch.cat(hiddens_m, dim=0), torch.cat(hiddens_s, dim=0)), (h_m, h_s)
+
+class GaussianNPRNLanguageModel(nn.Module):
+    """
+        Language Model wrapper
+    """
+    def __init__(self, vocab_sz, emb_sz, hidden_sz):
+        super(GaussianNPRNLanguageModel, self).__init__()
+
+        self.embeds_layer = nn.Embedding(vocab_sz, emb_sz)
+        self.nprn = GaussianNPRNCell(emb_sz, hidden_sz)
+
+        # TODO: implement weight tying
+        self.decoder_pre = GaussianNPNLinearLayer(hidden_sz, vocab_sz)
+        self.decoder_sigm = GaussianNPNNonLinearity('sigmoid')
+
+    def init_hidden(self, batch_sz):
+        return self.nprn.init_hidden(batch_sz)
+
+    def forward(self, input, hidden):
+        embeds = self.embeds_layer(input)
+        nprn_outs, hiddens = self.nprn(embeds, hidden)
+        outs_m, outs_s = self.decoder_pre(nprn_outs)
+        outs_m, outs_s = self.decoder_sigm(outs_m, outs_s)
+        return (outs_m, outs_s), hiddens
 
 if __name__ == '__main__':
     # do a basic test
     g = GaussianNPRNCell(300, 128, 0.1, 'gru')
-    x = autograd.Variable(torch.FloatTensor(np.random.rand(5,1,300)))
-    print(g(x))
+    x = autograd.Variable(torch.FloatTensor(np.random.rand(5,10,300)))
+    print(g(x)[0][0].shape)
 

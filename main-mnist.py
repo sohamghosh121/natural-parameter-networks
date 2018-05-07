@@ -29,7 +29,6 @@ def train(model, optimizer, epoch, batch_size=128, log_interval=10):
         data = data.view(data.size(0), -1)
         data_m = Variable(data)
         data_s = Variable(torch.zeros(data_m.size()))
-        trace, _ = torch.jit.trace(model, args=( data_m,data_s ))
         target_onehot = torch.FloatTensor(data.size(0), 10)
         target_onehot.zero_()
         target_onehot.scatter_(1, target.unsqueeze(1), 1)

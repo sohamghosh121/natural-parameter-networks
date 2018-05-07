@@ -8,11 +8,14 @@ import time
 import math
 import os
 import torch
+from torch.autograd import Variable
 import torch.nn as nn
+
+from NaturalRecurrentParameterNetworks import GaussianNPRNLanguageModel 
 
 import data
 
-parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 RNN/LSTM Language Model')
+parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 Gaussian NPRN Language Model')
 parser.add_argument('--data', type=str, default='./data/wikitext-2',
                     help='location of the data corpus')
 parser.add_argument('--model', type=str, default='LSTM',
@@ -33,6 +36,8 @@ parser.add_argument('--bptt', type=int, default=35,
                     help='sequence length')
 parser.add_argument('--dropout', type=float, default=0.2,
                     help='dropout applied to layers (0 = no dropout)')
+
+# this will only be valid with NPRN (can't have tied weights)
 parser.add_argument('--tied', action='store_true',
                     help='tie the word embedding and softmax weights')
 parser.add_argument('--seed', type=int, default=1111,
@@ -51,7 +56,6 @@ if torch.cuda.is_available():
     if not args.cuda:
         print("WARNING: You have a CUDA device, so you should probably run with --cuda")
 
-device = torch.device("cuda" if args.cuda else "cpu")
 
 ###############################################################################
 # Load data
@@ -78,7 +82,7 @@ def batchify(data, bsz):
     data = data.narrow(0, 0, nbatch * bsz)
     # Evenly divide the data across the bsz batches.
     data = data.view(bsz, -1).t().contiguous()
-    return data.to(device)
+    return data
 
 eval_batch_size = 10
 train_data = batchify(corpus.train, args.batch_size)
@@ -90,9 +94,9 @@ test_data = batchify(corpus.test, eval_batch_size)
 ###############################################################################
 
 ntokens = len(corpus.dictionary)
-model = model.RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers, args.dropout, args.tied).to(device)
+model = GaussianNPRNLanguageModel(ntokens, args.emsize, args.nhid)
 
-criterion = nn.CrossEntropyLoss()
+criterion = nn.BCELoss(size_average=False)
 
 ###############################################################################
 # Training code
@@ -100,10 +104,12 @@ criterion = nn.CrossEntropyLoss()
 
 def repackage_hidden(h):
     """Wraps hidden states in new Tensors, to detach them from their history."""
-    if isinstance(h, torch.Tensor):
+    if isinstance(h, Variable):
         return h.detach()
-    else:
+    elif isinstance(h,tuple):
         return tuple(repackage_hidden(v) for v in h)
+    else:
+        raise ValueError("hidden can't be %s" % type(h))
 
 
 # get_batch subdivides the source data into chunks of length args.bptt.
@@ -116,11 +122,15 @@ def repackage_hidden(h):
 # by the batchify function. The chunks are along dimension 0, corresponding
 # to the seq_len dimension in the LSTM.
 
-def get_batch(source, i):
+def get_batch(source, i, ntok):
     seq_len = min(args.bptt, len(source) - 1 - i)
     data = source[i:i+seq_len]
     target = source[i+1:i+1+seq_len].view(-1)
-    return data, target
+    target_onehot = torch.FloatTensor(target.size(0), ntok)
+    target_onehot.zero_()
+    target_onehot.scatter_(1, target.unsqueeze(1), 1)
+    target_onehot = Variable(target_onehot)
+    return data, target_onehot
 
 
 def evaluate(data_source):
@@ -131,7 +141,7 @@ def evaluate(data_source):
     hidden = model.init_hidden(eval_batch_size)
     with torch.no_grad():
         for i in range(0, data_source.size(0) - 1, args.bptt):
-            data, targets = get_batch(data_source, i)
+            data, targets = get_batch(data_source, i, ntokens)
             output, hidden = model(data, hidden)
             output_flat = output.view(-1, ntokens)
             total_loss += len(data) * criterion(output_flat, targets).item()
@@ -139,7 +149,7 @@ def evaluate(data_source):
     return total_loss / len(data_source)
 
 
-def train():
+def train(optimizer):
     # Turn on training mode which enables dropout.
     model.train()
     total_loss = 0.
@@ -147,21 +157,21 @@ def train():
     ntokens = len(corpus.dictionary)
     hidden = model.init_hidden(args.batch_size)
     for batch, i in enumerate(range(0, train_data.size(0) - 1, args.bptt)):
-        data, targets = get_batch(train_data, i)
+        data, targets = get_batch(train_data, i, ntokens)
         # Starting each batch, we detach the hidden state from how it was previously produced.
         # If we didn't, the model would try backpropagating all the way to start of the dataset.
+        data = Variable(data)
         hidden = repackage_hidden(hidden)
-        model.zero_grad()
+        optimizer.zero_grad()
         output, hidden = model(data, hidden)
-        loss = criterion(output.view(-1, ntokens), targets)
+        output_m, output_s = output
+        loss = criterion(output_m.view(-1, ntokens), targets)
         loss.backward()
+        optimizer.step()
 
-        # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
-        torch.nn.utils.clip_grad_norm(model.parameters(), args.clip)
-        for p in model.parameters():
-            p.data.add_(-lr, p.grad.data)
+        total_loss += loss.data.numpy()
 
-        total_loss += loss.item()
+        print(total_loss)
 
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
@@ -180,9 +190,10 @@ best_val_loss = None
 
 # At any point you can hit Ctrl + C to break out of training early.
 try:
+    optimizer = torch.optim.Adagrad(model.parameters())
     for epoch in range(1, args.epochs+1):
         epoch_start_time = time.time()
-        train()
+        train(optimizer)
         val_loss = evaluate(val_data)
         print('-' * 89)
         print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '

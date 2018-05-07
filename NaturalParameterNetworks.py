@@ -63,15 +63,23 @@ class GaussianNPNLinearLayer(nn.Module):
         p_s = np.exp(-1 * np.ones((_out)))
         return nn.Parameter(torch.Tensor(b_m)), nn.Parameter(torch.Tensor(p_s))
 
-    def forward(self, input_m, input_s):
+    def forward(self, input):
+        if isinstance(input, tuple):
+            input_m, input_s = input
+        elif isinstance(input, torch.Tensor):
+            input_m = input
+            input_s = autograd.Variable(input.new().zero_())
+        else:
+            raise ValueError('input was not a tuple or torch.Tensor (%s)' % type(input))
+
         # do this to ensure positivity of W_s, b_s
         b_s = torch.log(1 + torch.exp(self.p_s))
         W_s = torch.log(1 + torch.exp(self.M_s))
 
-        o_m = torch.addmm(self.b_m, input_m, self.W_m)
-        o_s = b_s + torch.mm(input_s, W_s) + \
-            torch.mm(input_s, torch.pow(self.W_m, 2)) + \
-            torch.mm(torch.pow(input_m, 2), W_s)
+        o_m = self.b_m + torch.matmul(input_m, self.W_m)
+        o_s = b_s + torch.matmul(input_s, W_s) + \
+            torch.matmul(input_s, torch.pow(self.W_m, 2)) + \
+            torch.matmul(torch.pow(input_m, 2), W_s)
         return o_m, o_s
 
 
