@@ -13,10 +13,10 @@ python main-mnist.py
 ```
 python main-lm.py
 ```
+You also need to download WikiText 2 data and put it in `data/` folder. There should be 3 files `train.txt`, `test.txt`, `valid.txt`.
 
 This has been done for course research project for 10-708 Probablistic Graphical Models at Carnegie Mellon University.
 
 ## TODO
-* Implementation of NPRN
 * Gaussian NPN for regression
-* Implement other variants
+* Implement other variants of NPN (Gamma NPN, Poisson NPN)
