@@ -89,7 +89,8 @@ class GaussianNPNNonLinearity(nn.Module):
         super(GaussianNPNNonLinearity, self).__init__()
         self.activation = activation
 
-    def forward(self, o_m, o_s):
+    def forward(self, o):
+        o_m, o_s = o
         if self.activation == 'sigmoid':
             a_m = torch.sigmoid(o_m * kappa(o_s))
             a_s = torch.sigmoid(((o_m + BETA) * ALPHA) * kappa(o_s, alphasq=ALPHA_SQ)) - torch.pow(a_m, 2)
@@ -124,11 +125,12 @@ class GaussianNPN(nn.Module):
         self.net = nn.Sequential(*list(self.layers)) # just to make model.parameters() work
         self.lossfn = nn.BCELoss(size_average=False)
 
-    def forward(self, a_m, a_s):
+    def forward(self, a):
         for L in self.layers:
-            a_m, a_s = L(a_m, a_s)
+            a = L(a)
+        a_m, a_s = a
         return a_m, a_s
 
     def loss(self, x_m, x_s, y):
-        a_m, a_s = self.forward(x_m, x_s)
+        a_m, a_s = self.forward((x_m, x_s))
         return self.lossfn(a_m, y)

@@ -113,8 +113,8 @@ class GaussianNPRN(nn.Module):
             (self.br_m, br_s))
         
         # calculate activations
-        z_m, z_s = self.sigmoid(z_om, z_os)
-        r_m, r_s = self.sigmoid(r_om, r_os)
+        z_m, z_s = self.sigmoid((z_om, z_os))
+        r_m, r_s = self.sigmoid((r_om, r_os))
         # do reset transform
         f_m, f_s = self.elemwise_prod(r_m, r_s, h_m, h_s)
 
@@ -125,7 +125,7 @@ class GaussianNPRN(nn.Module):
             (self.Ws_h_m, Ws_h_s),
             (self.bs_m, bs_s))
 
-        s_m, s_s = self.tanh(s_om, s_os)
+        s_m, s_s = self.tanh((s_om, s_os))
 
         # because of independence assertions, this is fine
         # NOTE: 1 - z_s ~ N(1 - z_m, z_s)
@@ -198,9 +198,9 @@ class GaussianNPRNLanguageModel(nn.Module):
     def forward(self, input, hidden):
         embeds = self.embeds_layer(input)
         nprn_outs, hiddens = self.nprn(embeds, hidden)
-        outs_m, outs_s = self.decoder_pre(nprn_outs)
-        outs_m, outs_s = self.decoder_sigm(outs_m, outs_s)
-        return (outs_m, outs_s), hiddens
+        outs = self.decoder_pre(nprn_outs)
+        outs = self.decoder_sigm(outs)
+        return outs, hiddens
 
 if __name__ == '__main__':
     # do a basic test

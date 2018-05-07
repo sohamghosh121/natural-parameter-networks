@@ -96,6 +96,9 @@ test_data = batchify(corpus.test, eval_batch_size)
 ntokens = len(corpus.dictionary)
 model = GaussianNPRNLanguageModel(ntokens, args.emsize, args.nhid)
 
+if args.cuda:
+    model = model.cuda()
+
 criterion = nn.BCELoss(size_average=False)
 
 ###############################################################################
@@ -125,10 +128,14 @@ def repackage_hidden(h):
 def get_batch(source, i, ntok):
     seq_len = min(args.bptt, len(source) - 1 - i)
     data = source[i:i+seq_len]
+    if args.cuda:
+        data = data.cuda()
     target = source[i+1:i+1+seq_len].view(-1)
     target_onehot = torch.FloatTensor(target.size(0), ntok)
     target_onehot.zero_()
     target_onehot.scatter_(1, target.unsqueeze(1), 1)
+    if args.cuda:
+        target_onehot = target_onehot.cuda()
     target_onehot = Variable(target_onehot)
     return data, target_onehot
 
@@ -170,8 +177,6 @@ def train(optimizer):
         optimizer.step()
 
         total_loss += loss.data.numpy()
-
-        print(total_loss)
 
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
