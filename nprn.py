@@ -210,6 +210,12 @@ class GaussianNPRNLanguageModel(nn.Module):
     def init_hidden(self, batch_sz):
         return self.nprn.init_hidden(batch_sz)
 
+    def logits(self, input, hidden):
+        embeds = self.embeds_layer(input)
+        nprn_outs, hiddens = self.nprn(embeds, hidden)
+        outs = self.decoder_pre(nprn_outs)
+        return outs, hiddens
+
     def forward(self, input, hidden):
         embeds = self.embeds_layer(input)
         nprn_outs, hiddens = self.nprn(embeds, hidden)
