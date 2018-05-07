@@ -22,10 +22,17 @@ BETA_2 = - float(0.5 * np.log(np.sqrt(2) + 1))
 np.random.seed(42)
 torch.manual_seed(42)
 
+if torch.cuda.is_available():
+    has_cuda = True
+    tt = torch.cuda
+else:
+    has_cuda = False
+    tt = torch
+
+
 class GaussianNPRN(nn.Module):
     """
         TODO: try to reuse code from NaturalParameterNetworks.py
-        TODO: make it a batched implementation
     """
     def __init__(self, input_features, hidden_sz, eps=0.1, variant='gru'):
         super(GaussianNPRN, self).__init__()
@@ -68,13 +75,13 @@ class GaussianNPRN(nn.Module):
         W_m = 2 * np.sqrt(6)/ np.sqrt(_in + _out) * (np.random.rand(_in, _out) - 0.5)
         W_s = 1 * np.sqrt(6)/ np.sqrt(_in + _out) * (np.random.rand(_in, _out))
         M_s = np.log(np.exp(W_s) - 1)
-        return nn.Parameter(torch.FloatTensor(W_m)), nn.Parameter(torch.FloatTensor(M_s))
+        return nn.Parameter(tt.FloatTensor(W_m)), nn.Parameter(tt.FloatTensor(M_s))
 
     def get_init_b(self, _out):
         b_m = np.zeros((_out))
         # instead of bias_s, parametrize as log(1+exp(pias_s))
         p_s = np.exp(-1 * np.ones((_out)))
-        return nn.Parameter(torch.Tensor(b_m)), nn.Parameter(torch.Tensor(p_s))
+        return nn.Parameter(tt.FloatTensor(b_m)), nn.Parameter(tt.FloatTensor(p_s))
 
     def pos_variance_transform(self, s):
         return torch.log(1 + torch.exp(s))
@@ -83,9 +90,14 @@ class GaussianNPRN(nn.Module):
         # always assume input_s is zero
         if type(input) is tuple: # directly sending input_m, input_s
             input_m, input_s = input
-        elif type(input) is autograd.Variable:
+        elif type(input) is torch.Tensor:
             input_m = input
-            input_s = autograd.Variable(torch.zeros(input_m.size()))
+            input_s = torch.zeros(input_m.size())
+            if has_cuda:
+                input_s = input_s.cuda()
+            input_s = autograd.Variable(input_s)
+        else:
+            raise ValueError('Got %s for input' % type(input))
 
         # do this to ensure positivity
         Wz_in_s = self.pos_variance_transform(self.Mz_in_s)
@@ -111,7 +123,7 @@ class GaussianNPRN(nn.Module):
             (self.Wr_in_m, Wr_in_s),
             (self.Wr_h_m, Wr_h_s),
             (self.br_m, br_s))
-        
+
         # calculate activations
         z_m, z_s = self.sigmoid((z_om, z_os))
         r_m, r_s = self.sigmoid((r_om, r_os))
@@ -143,7 +155,7 @@ class GaussianNPRN(nn.Module):
 
     def elemwise_sum(self, o1_m, o1_s, o2_m, o2_s):
         return o1_m + o2_m, o1_s + o2_s
-    
+
 
 class GaussianNPRNCell(nn.Module):
     """
@@ -155,9 +167,12 @@ class GaussianNPRNCell(nn.Module):
         self.eps = eps # small value for h_s
 
     def init_hidden(self, batch_sz):
-        h_m = autograd.Variable(torch.zeros(batch_sz, self.rnn.input_features))
+        h_m = torch.zeros(batch_sz, self.rnn.input_features)
         # non-zero variance?
-        h_s = autograd.Variable(torch.zeros(batch_sz, self.rnn.input_features).fill_(self.eps))
+        h_s = torch.zeros(batch_sz, self.rnn.input_features).fill_(self.eps)
+        if has_cuda:
+            h_m = h_m.cuda()
+            h_s = h_s.cuda()
         return h_m, h_s
 
     def forward(self, input_seq, hidden=None):
@@ -166,8 +181,8 @@ class GaussianNPRNCell(nn.Module):
         if len(input_seq.size()) < 3:
             raise ValueError('input should be of shape S x B x N')
         if hidden is None:
-            h_m = autograd.Variable(torch.FloatTensor(input_seq.size(1), self.rnn.hidden_sz).zero_())
-            h_s = autograd.Variable(torch.FloatTensor(input_seq.size(1), self.rnn.hidden_sz).fill_(self.eps))
+            h_m = autograd.Variable(tt.FloatTensor(input_seq.size(1), self.rnn.hidden_sz).zero_())
+            h_s = autograd.Variable(tt.FloatTensor(input_seq.size(1), self.rnn.hidden_sz).fill_(self.eps))
         else:
             h_m, h_s = hidden # tuple
         hiddens_m = []
@@ -205,6 +220,6 @@ class GaussianNPRNLanguageModel(nn.Module):
 if __name__ == '__main__':
     # do a basic test
     g = GaussianNPRNCell(300, 128, 0.1, 'gru')
-    x = autograd.Variable(torch.FloatTensor(np.random.rand(5,10,300)))
+    x = autograd.Variable(tt.FloatTensor(np.random.rand(5,10,300)))
     print(g(x)[0][0].shape)
 

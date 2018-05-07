@@ -11,7 +11,7 @@ import torch
 from torch.autograd import Variable
 import torch.nn as nn
 
-from NaturalRecurrentParameterNetworks import GaussianNPRNLanguageModel 
+from NaturalRecurrentParameterNetworks import GaussianNPRNLanguageModel
 
 import data
 
@@ -53,8 +53,7 @@ args = parser.parse_args()
 # Set the random seed manually for reproducibility.
 torch.manual_seed(args.seed)
 if torch.cuda.is_available():
-    if not args.cuda:
-        print("WARNING: You have a CUDA device, so you should probably run with --cuda")
+    args.cuda = True
 
 
 ###############################################################################
@@ -176,15 +175,19 @@ def train(optimizer):
         loss.backward()
         optimizer.step()
 
-        total_loss += loss.data.numpy()
+        if args.cuda:
+            total_loss += loss.data.cpu().numpy()
+        else:
+            total_loss += loss.data.numpy()
+
 
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
             print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
-                    'loss {:5.2f} | ppl {:8.2f}'.format(
+                    'loss {:5.2f}'.format(
                 epoch, batch, len(train_data) // args.bptt, lr,
-                elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
+                elapsed * 1000 / args.log_interval, cur_loss ))
             total_loss = 0
             start_time = time.time()
 
