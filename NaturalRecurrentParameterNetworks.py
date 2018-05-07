@@ -90,7 +90,7 @@ class GaussianNPRN(nn.Module):
         # always assume input_s is zero
         if type(input) is tuple: # directly sending input_m, input_s
             input_m, input_s = input
-        elif type(input) is torch.Tensor:
+        elif type(input) is autograd.Variable or type(input) is tt.Tensor:
             input_m = input
             input_s = torch.zeros(input_m.size())
             if has_cuda:
@@ -173,7 +173,7 @@ class GaussianNPRNCell(nn.Module):
         if has_cuda:
             h_m = h_m.cuda()
             h_s = h_s.cuda()
-        return h_m, h_s
+        return autograd.Variable(h_m), autograd.Variable(h_s)
 
     def forward(self, input_seq, hidden=None):
         # input: S x B x 1 x N

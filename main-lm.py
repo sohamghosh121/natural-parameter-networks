@@ -99,7 +99,7 @@ if args.cuda:
     model = model.cuda()
 
 criterion = nn.BCELoss(size_average=False)
-
+nllcriterion = nn.NLLLoss()
 ###############################################################################
 # Training code
 ###############################################################################
@@ -135,22 +135,23 @@ def get_batch(source, i, ntok):
     target_onehot.scatter_(1, target.unsqueeze(1), 1)
     if args.cuda:
         target_onehot = target_onehot.cuda()
+        target = target.cuda()
     target_onehot = Variable(target_onehot)
-    return data, target_onehot
+    target = Variable(target)
+    return data, target, target_onehot
 
 
 def evaluate(data_source):
-    # Turn on evaluation mode which disables dropout.
     model.eval()
     total_loss = 0.
     ntokens = len(corpus.dictionary)
     hidden = model.init_hidden(eval_batch_size)
     with torch.no_grad():
         for i in range(0, data_source.size(0) - 1, args.bptt):
-            data, targets = get_batch(data_source, i, ntokens)
+            data, targets, _ = get_batch(data_source, i, ntokens)
             output, hidden = model(data, hidden)
-            output_flat = output.view(-1, ntokens)
-            total_loss += len(data) * criterion(output_flat, targets).item()
+            output_flat = output[0].view(-1, ntokens)
+            total_loss += nllcriterion(output_flat, targets).item()
             hidden = repackage_hidden(hidden)
     return total_loss / len(data_source)
 
@@ -159,11 +160,12 @@ def train(optimizer):
     # Turn on training mode which enables dropout.
     model.train()
     total_loss = 0.
+    total_nll_loss = 0.
     start_time = time.time()
     ntokens = len(corpus.dictionary)
     hidden = model.init_hidden(args.batch_size)
     for batch, i in enumerate(range(0, train_data.size(0) - 1, args.bptt)):
-        data, targets = get_batch(train_data, i, ntokens)
+        data, targets, targets_onehot = get_batch(train_data, i, ntokens)
         # Starting each batch, we detach the hidden state from how it was previously produced.
         # If we didn't, the model would try backpropagating all the way to start of the dataset.
         data = Variable(data)
@@ -171,24 +173,27 @@ def train(optimizer):
         optimizer.zero_grad()
         output, hidden = model(data, hidden)
         output_m, output_s = output
-        loss = criterion(output_m.view(-1, ntokens), targets)
+        output_flat = output_m.view(-1, ntokens)
+        loss = criterion(output_flat, targets_onehot)
         loss.backward()
+        nll_loss = nllcriterion(output_flat, targets)
+
         optimizer.step()
 
-        if args.cuda:
-            total_loss += loss.data.cpu().numpy()
-        else:
-            total_loss += loss.data.numpy()
+        total_loss += loss.data.item()
+        total_nll_loss += nll_loss.data.item()
 
 
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
+            cur_loss = total_nll_loss / args.log_interval
             elapsed = time.time() - start_time
             print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
-                    'loss {:5.2f}'.format(
+                    'loss {:5.2f} | ppl {:8.2f}'.format(
                 epoch, batch, len(train_data) // args.bptt, lr,
-                elapsed * 1000 / args.log_interval, cur_loss ))
+                elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_nll_loss) ))
             total_loss = 0
+            total_nll_loss = 0
             start_time = time.time()
 
 
