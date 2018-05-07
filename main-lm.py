@@ -11,7 +11,7 @@ import torch
 from torch.autograd import Variable
 import torch.nn as nn
 
-from NaturalRecurrentParameterNetworks import GaussianNPRNLanguageModel
+from nprn import GaussianNPRNLanguageModel
 
 import data
 
@@ -99,7 +99,7 @@ if args.cuda:
     model = model.cuda()
 
 criterion = nn.BCELoss(size_average=False)
-nllcriterion = nn.NLLLoss()
+nllcriterion = nn.CrossEntropyLoss()
 ###############################################################################
 # Training code
 ###############################################################################
@@ -186,7 +186,7 @@ def train(optimizer):
 
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
-            cur_loss = total_nll_loss / args.log_interval
+            cur_nll_loss = total_nll_loss / args.log_interval
             elapsed = time.time() - start_time
             print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
                     'loss {:5.2f} | ppl {:8.2f}'.format(

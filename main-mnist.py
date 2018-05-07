@@ -11,7 +11,7 @@ import numpy as np
 from torchvision import datasets, transforms
 from torch.autograd import Variable
 from torchvision import datasets
-from NaturalParameterNetworks import GaussianNPN
+from npn import GaussianNPN
 
 from torchviz import make_dot, make_dot_from_trace
 
@@ -42,7 +42,7 @@ def train(model, optimizer, epoch, batch_size=128, log_interval=10):
 
         optimizer.step()
         train_loss += loss.data.numpy()[0]
-        
+
         output = model((data_m, data_s))
         pred = output[0].data.max(1, keepdim=True)[1] # get the index of the max log-probability
         train_correct += pred.eq(target.view_as(pred)).long().cpu().sum()
@@ -51,11 +51,11 @@ def train(model, optimizer, epoch, batch_size=128, log_interval=10):
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
                 100. * batch_idx / len(train_loader), loss.data[0]))
-    
+
     print('\nTrain set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         train_loss , train_correct, len(train_loader.dataset),
         100. * train_correct / len(train_loader.dataset)))
-    
+
 
 def test(model, batch_size=128):
     model.eval()
@@ -73,10 +73,10 @@ def test(model, batch_size=128):
         target_onehot.scatter_(1, target.unsqueeze(1), 1)
         target_onehot = Variable(target_onehot)
         output = model((data_m, data_s))
-        
+
         loss = model.loss(data_m, data_s, target_onehot)
         _, pred = output[0].data.max(1, keepdim=True) # get the index of the max log-probability
-        
+
         is_correct = pred.eq(target.view_as(pred)).long().cpu().numpy()
         pred_np = pred.long().cpu().numpy().squeeze()
         uncertainty = output[1].data.cpu().numpy()

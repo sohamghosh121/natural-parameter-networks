@@ -6,7 +6,7 @@ import torch.optim as O
 import torch.autograd as autograd
 import torch.nn.functional as F
 
-from NaturalParameterNetworks import GaussianNPNLinearLayer, GaussianNPNNonLinearity
+from npn import GaussianNPNLinearLayer, GaussianNPNNonLinearity
 
 PI = float(np.pi)
 ETA_SQ = float(np.pi / 8.0)
@@ -90,7 +90,7 @@ class GaussianNPRN(nn.Module):
         # always assume input_s is zero
         if type(input) is tuple: # directly sending input_m, input_s
             input_m, input_s = input
-        elif type(input) is autograd.Variable or type(input) is tt.Tensor:
+        elif type(input) is autograd.Variable or type(input) is torch.Tensor:
             input_m = input
             input_s = torch.zeros(input_m.size())
             if has_cuda:
