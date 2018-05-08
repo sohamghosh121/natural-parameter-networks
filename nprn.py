@@ -223,6 +223,38 @@ class GaussianNPRNLanguageModel(nn.Module):
         outs = self.decoder_sigm(outs)
         return outs, hiddens
 
+class GaussianNPRNClassifier(nn.Module):
+    """
+        Gaussian NPN GRU Classifier wrapper
+        if seq_labeling = True,
+            - apply last layer to every hidden output
+            - else apply last layer only to final output
+    """
+    def __init__(self, vocab_sz, hidden_sz, output_sz, seq_labeling=True, emb_sz=None, pretrained_emb=None):
+
+        super(GaussianNPRNClassifier, self).__init__()
+        if pretrained_emb is not None:
+            emb_sz = pretrained_emb.size(1)
+            self.embeds = nn.Embedding(vocab_sz, emb_sz)
+            self.embeds.weight.data = pretrained_emb
+        elif emb_sz is not None:
+            self.embeds = nn.Embedding(vocab_sz, emb_sz)
+        else:
+            raise Exception('Either embedding size of pretrained weights must be provided')
+        self.nprn = GaussianNPRNCell(emb_sz, hidden_sz)
+        self.decoder_pre = GaussianNPNLinearLayer(hidden_sz, output_sz)
+        self.decoder_sigm = GaussianNPNNonLinearity('sigmoid')
+
+    def init_hidden(self, batch_sz):
+        return self.nprn.init_hidden(batch_sz)
+
+    def forward(self, input, hidden):
+        emb = self.embeds(input)
+        nprn_outs, hiddens = self.nprn(emb, hidden)
+        outs = self.decoder_pre(nprn_outs)
+        outs = self.decoder_sigm(outs)
+        return outs
+
 if __name__ == '__main__':
     # do a basic test
     g = GaussianNPRNCell(300, 128, 0.1, 'gru')
