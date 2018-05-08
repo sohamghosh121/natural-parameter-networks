@@ -167,9 +167,9 @@ class GaussianNPRNCell(nn.Module):
         self.eps = eps # small value for h_s
 
     def init_hidden(self, batch_sz):
-        h_m = torch.zeros(batch_sz, self.rnn.input_features)
+        h_m = torch.zeros(batch_sz, self.rnn.hidden_sz)
         # non-zero variance?
-        h_s = torch.zeros(batch_sz, self.rnn.input_features).fill_(self.eps)
+        h_s = torch.zeros(batch_sz, self.rnn.hidden_sz).fill_(self.eps)
         if has_cuda:
             h_m = h_m.cuda()
             h_s = h_s.cuda()
@@ -201,7 +201,7 @@ class GaussianNPRNLanguageModel(nn.Module):
         super(GaussianNPRNLanguageModel, self).__init__()
 
         self.embeds_layer = nn.Embedding(vocab_sz, emb_sz)
-        self.nprn = GaussianNPRNCell(emb_sz, hidden_sz)
+        self.nprn = GaussianNPRNCell(emb_sz, hidden_sz, eps=eps)
 
         # TODO: implement weight tying
         self.decoder_pre = GaussianNPNLinearLayer(hidden_sz, vocab_sz)
@@ -230,7 +230,7 @@ class GaussianNPRNClassifier(nn.Module):
             - apply last layer to every hidden output
             - else apply last layer only to final output
     """
-    def __init__(self, vocab_sz, hidden_sz, output_sz, seq_labeling=True, emb_sz=None, pretrained_emb=None):
+    def __init__(self, vocab_sz, hidden_sz, output_sz, seq_labeling=True, emb_sz=None, pretrained_emb=None,eps=0.0):
 
         super(GaussianNPRNClassifier, self).__init__()
         if pretrained_emb is not None:
@@ -254,6 +254,48 @@ class GaussianNPRNClassifier(nn.Module):
         nprn_outs, hiddens = self.nprn(emb, hidden)
         if self.seq_labeling:
             outs = self.decoder_pre(nprn_outs)
+            outs = self.decoder_sigm(outs)
+        else:
+            # hiddens is tuple (h_m, h_s)
+            outs = self.decoder_pre(hiddens)
+            outs = self.decoder_sigm(outs)
+        return outs
+
+class GRUNPNClassifier(nn.Module):
+    """
+        GRU with NPN Layer Classifier wrapper
+        if seq_labeling = True,
+            - apply last layer to every hidden output
+            - else apply last layer only to final output
+    """
+    def __init__(self, vocab_sz, hidden_sz, output_sz, seq_labeling=True, emb_sz=None, pretrained_emb=None,eps=0.0):
+
+        super(GRUNPNClassifier, self).__init__()
+        if pretrained_emb is not None:
+            emb_sz = pretrained_emb.size(1)
+            self.embeds = nn.Embedding(vocab_sz, emb_sz)
+            self.embeds.weight.data = pretrained_emb
+        elif emb_sz is not None:
+            self.embeds = nn.Embedding(vocab_sz, emb_sz)
+        else:
+            raise Exception('Either embedding size of pretrained weights must be provided')
+        self.gru = nn.GRUCell(emb_sz, hidden_sz)
+        self.seq_labeling = seq_labeling
+        self.decoder_pre = GaussianNPNLinearLayer(hidden_sz, output_sz)
+        self.decoder_sigm = GaussianNPNNonLinearity('sigmoid')
+        self.hidden_sz = hidden_sz
+
+    def init_hidden(self, batch_sz):
+        h = torch.zeros(batch_sz, self.hidden_sz)
+        return autograd.Variable(h)
+
+    def forward(self, input, hidden):
+        emb = self.embeds(input)
+        print(emb.size())
+        print(hidden.size())
+        gru_outs, hiddens = self.gru(emb, hidden)
+        if self.seq_labeling:
+            outs = self.decoder_pre(gru_outs)
             outs = self.decoder_sigm(outs)
         else:
             # hiddens is tuple (h_m, h_s)

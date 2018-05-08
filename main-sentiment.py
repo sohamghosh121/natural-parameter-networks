@@ -37,7 +37,7 @@ LABEL.build_vocab(train.label)
 
 # make iterator for splits
 train_iter, test_iter = data.BucketIterator.splits(
-    (train, test), batch_size=16, device="cuda:0", sort=False)
+    (train, test), batch_size=8, device="cuda:0", sort=False)
 
 imdb_model = GaussianNPRNClassifier(len(TEXT.vocab),
     300,
@@ -48,7 +48,7 @@ imdb_model = GaussianNPRNClassifier(len(TEXT.vocab),
 if torch.cuda.is_available():
     imdb_model = imdb_model.cuda()
 
-imdb_model_optim = O.Adam(imdb_model.parameters(), weight_decay=1e-4)
+imdb_model_optim = O.Adam(imdb_model.parameters(), lr=1e-3, weight_decay=1e-4)
 
 def run_model(batch_iter, epoch, train=True):
     preds_out = open('imdb-sentiment/imdb-preds-%d.txt' % epoch, 'w')
@@ -66,7 +66,12 @@ def run_model(batch_iter, epoch, train=True):
     batch_ix = 1
     for batch in iter(batch_iter):
         text = batch.text[0].t()
+
+        if text.size(0) > 1000:
+            continue # skip long reviews
+
         label = batch.label.unsqueeze(1) # unsqueeze to keepdim=True
+        label = label
 
         label_target = to_onehot(len(LABEL.vocab), label)
         data = Variable(text)
@@ -94,10 +99,11 @@ def run_model(batch_iter, epoch, train=True):
             for s_ix in range(output_m.size(1)):
                 pr = preds[s_ix].item()
                 gt = label[s_ix].item()
-                preds_out.write('%d %d %.4f\n' % (pr, gt, output_s[s_ix, pr]))
+                preds_out.write('%d %d %.4f\n' % (pr, gt, output_s[s_ix, pr].item()))
 
         tot_batch += batch.batch_size
-        if batch_ix % 10 == 0:
+        torch.cuda.empty_cache()
+        if batch_ix % 50 == 0:
             print('Loss: %.3f    Accuracy: %.3f' % (tot_loss / tot_batch, float(tot_correct) / float(tot_ex)))
 
         batch_ix += 1
@@ -106,8 +112,8 @@ def run_model(batch_iter, epoch, train=True):
     print('Loss: %.3f    Accuracy: %.3f' % (tot_loss / tot_batch, float(tot_correct) / float(tot_ex)))
     print('-' * 89)
 
-val_freq = 10
-run_model(test_iter, 0, train=False)
+val_freq = 1
+# run_model(test_iter, 0, train=False)
 for epoch in range(1, 1000):
     print('##### Epoch %d' % epoch)
     run_model(train_iter, epoch, train=True)
