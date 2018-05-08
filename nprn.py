@@ -242,6 +242,7 @@ class GaussianNPRNClassifier(nn.Module):
         else:
             raise Exception('Either embedding size of pretrained weights must be provided')
         self.nprn = GaussianNPRNCell(emb_sz, hidden_sz)
+        self.seq_labeling = seq_labeling
         self.decoder_pre = GaussianNPNLinearLayer(hidden_sz, output_sz)
         self.decoder_sigm = GaussianNPNNonLinearity('sigmoid')
 
@@ -251,8 +252,13 @@ class GaussianNPRNClassifier(nn.Module):
     def forward(self, input, hidden):
         emb = self.embeds(input)
         nprn_outs, hiddens = self.nprn(emb, hidden)
-        outs = self.decoder_pre(nprn_outs)
-        outs = self.decoder_sigm(outs)
+        if self.seq_labeling:
+            outs = self.decoder_pre(nprn_outs)
+            outs = self.decoder_sigm(outs)
+        else:
+            # hiddens is tuple (h_m, h_s)
+            outs = self.decoder_pre(hiddens)
+            outs = self.decoder_sigm(outs)
         return outs
 
 if __name__ == '__main__':

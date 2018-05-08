@@ -9,6 +9,8 @@ from torchtext.vocab import GloVe
 
 from nprn import GaussianNPRNClassifier
 
+torch.manual_seed(42)
+
 def to_onehot(sz, tensor):
     bsz = tensor.size(0)
     target_onehot = torch.zeros(bsz, sz)
@@ -36,7 +38,7 @@ UD_TAG.build_vocab(train.udtag)
 PTB_TAG.build_vocab(train.ptbtag)
 
 train_iter, val_iter = data.BucketIterator.splits(
-    (train, val), batch_size=32)
+    (train, val), batch_size=16, sort=False)
 
 ptbmodel = GaussianNPRNClassifier(len(WORD.vocab),
     300,
@@ -54,8 +56,8 @@ if torch.cuda.is_available():
     ptbmodel = ptbmodel.cuda()
     udmodel = udmodel.cuda()
 
-ptbmodel_optim = O.Adagrad(ptbmodel.parameters())
-udmodel_optim = O.Adagrad(udmodel.parameters())
+ptbmodel_optim = O.Adam(ptbmodel.parameters(), weight_decay=1e-4)
+udmodel_optim = O.Adam(udmodel.parameters(), weight_decay=1e-4)
 
 
 criterion = nn.BCELoss(size_average=False)
@@ -109,6 +111,7 @@ def run_model(batch_iter, epoch, train=True):
         tot_ptbcorrect += is_correct.sum().item()
         if train:
             ptb_loss.backward()
+            torch.nn.utils.clip_grad_norm(ptbmodel.parameters(), 0.1)
             ptbmodel_optim.step()
 
         # train udmodel
@@ -123,15 +126,16 @@ def run_model(batch_iter, epoch, train=True):
         tot_ptbloss += ptb_loss.data.item()
         tot_udloss += ud_loss.data.item()
         if train:
-            ud_loss.backward()  
+            ud_loss.backward()
+            torch.nn.utils.clip_grad_norm(udmodel.parameters(), 0.1)
             udmodel_optim.step()
 
         tot_ex_ptb += ptb_outputs_flat.size(0)
         tot_ex_ud += ud_outputs_flat.size(0)
 
         tot_batch += batch.batch_size
+        pred = torch.argmax(ptb_outputs_m, 2)
         if not train:
-            pred = torch.argmax(ptb_outputs_m, 2)
             for s_ix in range(ptb_outputs_m.size(1)):
                 for w_ix in range(ptb_outputs_m.size(0)):
                     pr = pred[w_ix, s_ix].item()
