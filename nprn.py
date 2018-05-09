@@ -45,7 +45,9 @@ class GaussianNPRN(nn.Module):
             self.br_m, self.pr_s = self.get_init_b(hidden_sz)
             self.Ws_in_m, self.Ms_in_s = self.get_init_W(input_features, hidden_sz)
             self.Ws_h_m, self.Ms_h_s = self.get_init_W(hidden_sz, hidden_sz)
+            self.bs_in_m, self.ps_in_s = self.get_init_b(hidden_sz)
             self.bs_m, self.ps_s = self.get_init_b(hidden_sz)
+
 
             self.sigmoid = GaussianNPNNonLinearity('sigmoid')
             self.tanh = GaussianNPNNonLinearity('tanh')
@@ -58,17 +60,26 @@ class GaussianNPRN(nn.Module):
 
     def linear_layer(self, x, h, W, U, b):
         x_m, x_s = x
-        h_m, h_s = h
         W_m, W_s = W
-        U_m, U_s = U
         b_m, b_s = b
-        o_m = b_m + torch.matmul(x_m, W_m) + torch.matmul(h_m, U_m)
-        o_s = b_s + torch.matmul(x_s, W_s) + \
-            torch.matmul(x_s, torch.pow(W_m, 2)) + \
-            torch.matmul(torch.pow(x_m, 2), W_s) + \
-            torch.matmul(h_s, torch.pow(U_s, 2)) + \
-            torch.matmul(torch.pow(h_m, 2), U_s)
-        return o_m, o_s
+        if h is not None and U is not None:
+            h_m, h_s = h
+            U_m, U_s = U
+            o_m = b_m + torch.matmul(x_m, W_m) + torch.matmul(h_m, U_m)
+            o_s = b_s + torch.matmul(x_s, W_s) + \
+                torch.matmul(x_s, torch.pow(W_m, 2)) + \
+                torch.matmul(torch.pow(x_m, 2), W_s) + \
+                torch.matmul(h_s, W_s) + \
+                torch.matmul(h_s, torch.pow(U_m, 2)) + \
+                torch.matmul(torch.pow(h_m, 2), U_s)
+            return o_m, o_s
+        else:
+            o_m = b_m + torch.matmul(x_m, W_m)
+            o_s = b_s + torch.matmul(x_s, W_s) + \
+                torch.matmul(x_s, torch.pow(W_m, 2)) + \
+                torch.matmul(torch.pow(x_m, 2), W_s)
+            return o_m, o_s
+
 
     def get_init_W(self, _in, _out):
         # TODO: initialisation probably needs to change?
@@ -109,6 +120,7 @@ class GaussianNPRN(nn.Module):
         Ws_in_s = self.pos_variance_transform(self.Ms_in_s)
         Ws_h_s = self.pos_variance_transform(self.Ms_h_s)
         bs_s = self.pos_variance_transform(self.ps_s)
+        bs_in_s = self.pos_variance_transform(self.ps_in_s)
 
         z_om, z_os = self.linear_layer(
             (input_m, input_s),
@@ -128,15 +140,23 @@ class GaussianNPRN(nn.Module):
         z_m, z_s = self.sigmoid((z_om, z_os))
         r_m, r_s = self.sigmoid((r_om, r_os))
         # do reset transform
-        f_m, f_s = self.elemwise_prod(r_m, r_s, h_m, h_s)
-
-        s_om, s_os = self.linear_layer(
-            (input_m, input_s),
+        h_proj_m, h_proj_s = self.linear_layer(
             (h_m, h_s),
-            (self.Ws_in_m, Ws_in_s),
+            None,
             (self.Ws_h_m, Ws_h_s),
-            (self.bs_m, bs_s))
+            None,
+            (self.bs_m, bs_s)
+        )
+        f_m, f_s = self.elemwise_prod(r_m, r_s, h_proj_m, h_proj_s)
 
+        in_proj_om, in_proj_os = self.linear_layer(
+            (input_m, input_s),
+            None,
+            (self.Ws_in_m, Ws_in_s),
+            None,
+            (self.bs_in_m, bs_in_s))
+
+        s_om, s_os = self.elemwise_sum(in_proj_om, in_proj_os, f_m, f_s)
         s_m, s_s = self.tanh((s_om, s_os))
 
         # because of independence assertions, this is fine
@@ -279,27 +299,30 @@ class GRUNPNClassifier(nn.Module):
             self.embeds = nn.Embedding(vocab_sz, emb_sz)
         else:
             raise Exception('Either embedding size of pretrained weights must be provided')
-        self.gru = nn.GRUCell(emb_sz, hidden_sz)
+        self.gru = nn.GRU(emb_sz, hidden_sz, 1)
         self.seq_labeling = seq_labeling
         self.decoder_pre = GaussianNPNLinearLayer(hidden_sz, output_sz)
         self.decoder_sigm = GaussianNPNNonLinearity('sigmoid')
         self.hidden_sz = hidden_sz
 
     def init_hidden(self, batch_sz):
-        h = torch.zeros(batch_sz, self.hidden_sz)
+        h = torch.zeros(1, batch_sz, self.hidden_sz)
+        if has_cuda:
+            h = h.cuda()
         return autograd.Variable(h)
 
     def forward(self, input, hidden):
         emb = self.embeds(input)
-        print(emb.size())
-        print(hidden.size())
         gru_outs, hiddens = self.gru(emb, hidden)
+        outs_s = torch.zeros(gru_outs.size())
+        if has_cuda:
+            outs_s = outs_s.cuda()
         if self.seq_labeling:
-            outs = self.decoder_pre(gru_outs)
+            outs = self.decoder_pre((gru_outs, outs_s))
             outs = self.decoder_sigm(outs)
         else:
             # hiddens is tuple (h_m, h_s)
-            outs = self.decoder_pre(hiddens)
+            outs = self.decoder_pre((gru_outs, outs_s))
             outs = self.decoder_sigm(outs)
         return outs
 
